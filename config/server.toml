@@ -1,0 +1,27 @@
+[server]
+listen_addr = "127.0.0.1:8443"
+health_addr = "127.0.0.1:8081"
+
+[tls]
+chain_path = "certs/server-chain.pem"
+key_path = "certs/server.key"
+root_ca_path = "certs/rootca.crt"
+
+[upstream]
+# backends = ["http://127.0.0.1:18888"]
+backends = [
+    "http://127.0.0.1:18888",
+    "http://127.0.0.1:17777",
+    "http://127.0.0.1:19999",
+]
+
+[logging]
+level = "info"
+format = "text"
+detailed_logging = true
+log_response_body = true
+max_logged_body_size = 1048576
+
+[health_check]
+interval_seconds = 10
+connection_timeout_ms = 1000

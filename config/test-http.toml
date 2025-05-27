@@ -1,0 +1,15 @@
+[server]
+listen_addr = "127.0.0.1:8443"
+health_addr = "127.0.0.1:8444"
+
+[tls]
+chain_path = "out/server.crt"   # Server certificate (proxy presents this)
+key_path = "out/server.key"     # Server private key  
+root_ca_path = "out/rootca.crt" # Root CA (to validate client certs)
+
+[upstream]
+backends = ["54.159.209.11:80"]
+health_check_interval_secs = 5
+
+[logging]
+level = "debug"
