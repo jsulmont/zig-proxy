@@ -274,7 +274,6 @@ pub const ConnectionContext = struct {
         self.downstream_tcp.safeClose(connectionCloseCallback);
     }
 
-    // Private helper methods
     fn extractCertificateInfo(self: *ConnectionContext) void {
         if (self.tls_conn.getClientCertificate()) |cert| {
             const fingerprint = certificate.calculateCertificateFingerprint(self.gpa, cert) catch |err| {
@@ -361,7 +360,7 @@ pub const ConnectionContext = struct {
         const request = &self.request_ctx.?.request.?;
 
         if (request.body) |body| {
-            if (self.isXmlContent(body)) {
+            if (self.isXmlBody(body)) {
                 xml_parser.init();
                 var processor = xml_parser.XmlProcessor.init(self.gpa);
                 var result = processor.processXml(body, .inbound, null) catch {
@@ -379,12 +378,16 @@ pub const ConnectionContext = struct {
         }
     }
 
-    fn isXmlContent(self: *ConnectionContext, data: []const u8) bool {
+    fn isXmlBody(self: *ConnectionContext, data: []const u8) bool {
         _ = self;
+        const trimmed = std.mem.trim(u8, data, " \t\n\r");
+        return trimmed.len > 0 and trimmed[0] == '<';
+    }
 
-        if (std.mem.indexOf(u8, data, "\r\n\r\n")) |header_end| {
-            const headers = data[0..header_end];
-
+    fn hasXmlContentType(self: *ConnectionContext, http_data: []const u8) bool {
+        _ = self;
+        if (std.mem.indexOf(u8, http_data, "\r\n\r\n")) |header_end| {
+            const headers = http_data[0..header_end];
             var line_it = std.mem.splitSequence(u8, headers, "\r\n");
             while (line_it.next()) |line| {
                 if (std.ascii.startsWithIgnoreCase(line, "content-type:")) {
@@ -392,7 +395,6 @@ pub const ConnectionContext = struct {
                 }
             }
         }
-
         return false;
     }
 
@@ -486,7 +488,7 @@ pub const ConnectionContext = struct {
         else
             response_data;
 
-        if (response_body.len > 0 and self.isXmlContent(response_data)) {
+        if (response_body.len > 0 and self.hasXmlContentType(response_data)) {
             xml_parser.init();
             var processor = xml_parser.XmlProcessor.init(self.gpa);
             var result = processor.processXml(response_body, .outbound, null) catch |err| blk: {
