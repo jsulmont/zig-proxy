@@ -1,10 +1,19 @@
-// src/utils/uv.zig - Fixed libuv wrapper with proper error translation
+// src/utils/uv.zig
 const std = @import("std");
 
-// TODO: Replace with actual libuv bindings
-const LOOP_SIZE = 1072;
-const HANDLE_SIZE = 264;
-const REQ_SIZE = 256;
+// Actual libuv struct sizes (from uv_size.c output)
+pub const LOOP_SIZE = 1072;
+pub const HANDLE_SIZE = 264; // Using tcp_t size as it's among the largest handles
+pub const REQ_SIZE = 440; // Using fs_t size as it's the largest request type
+
+// libuv type constants
+const UV_TCP: c_int = 12;
+const UV_TIMER: c_int = 13;
+
+const UV_CONNECT: c_int = 2;
+const UV_WRITE: c_int = 3;
+const UV_WORK: c_int = 7;
+const UV_GETADDRINFO: c_int = 8;
 
 // Opaque libuv types
 pub const uv_loop_t = opaque {};
@@ -24,7 +33,7 @@ pub const uv_after_work_cb = *const fn (*uv_work_t, c_int) callconv(.C) void;
 
 // Base handle type
 pub const Handle = extern struct {
-    data: [HANDLE_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [HANDLE_SIZE]u8 align(8),
 
     pub fn setData(self: *Handle, user_data: ?*anyopaque) void {
         uv_handle_set_data(@ptrCast(self), user_data);
@@ -46,7 +55,7 @@ pub const Handle = extern struct {
 };
 
 pub const Loop = extern struct {
-    data: [LOOP_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [LOOP_SIZE]u8 align(8),
 
     pub fn init(self: *Loop) !void {
         if (uv_loop_init(@ptrCast(self)) != 0) {
@@ -68,7 +77,7 @@ pub const Loop = extern struct {
 };
 
 pub const Tcp = extern struct {
-    data: [HANDLE_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [HANDLE_SIZE]u8 align(8),
 
     pub fn init(self: *Tcp, loop: *Loop) !void {
         if (uv_tcp_init(@ptrCast(loop), @ptrCast(self)) != 0) {
@@ -155,7 +164,7 @@ pub const Tcp = extern struct {
 };
 
 pub const Timer = extern struct {
-    data: [HANDLE_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [HANDLE_SIZE]u8 align(8),
 
     pub fn init(self: *Timer, loop: *Loop) !void {
         if (uv_timer_init(@ptrCast(loop), @ptrCast(self)) != 0) {
@@ -199,7 +208,7 @@ const RequestBase = extern struct {
 };
 
 pub const WriteReq = extern struct {
-    data: [REQ_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [REQ_SIZE]u8 align(8),
 
     pub fn init() WriteReq {
         return WriteReq{
@@ -219,7 +228,7 @@ pub const WriteReq = extern struct {
 };
 
 pub const ConnectReq = extern struct {
-    data: [REQ_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [REQ_SIZE]u8 align(8),
 
     pub fn init() ConnectReq {
         return ConnectReq{
@@ -239,7 +248,7 @@ pub const ConnectReq = extern struct {
 };
 
 pub const GetAddrInfoReq = extern struct {
-    data: [REQ_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [REQ_SIZE]u8 align(8),
 
     pub fn init() GetAddrInfoReq {
         return GetAddrInfoReq{
@@ -259,7 +268,7 @@ pub const GetAddrInfoReq = extern struct {
 };
 
 pub const WorkReq = extern struct {
-    data: [REQ_SIZE]u8 align(@alignOf(*anyopaque)),
+    data: [REQ_SIZE]u8 align(8),
 
     pub fn init() WorkReq {
         return WorkReq{
@@ -319,8 +328,6 @@ pub const AddrInfo = extern struct {
 pub const UV_RUN_DEFAULT: c_int = 0;
 pub const UV_RUN_ONCE: c_int = 1;
 pub const UV_RUN_NOWAIT: c_int = 2;
-
-// FIXED: Correct libuv error codes (they are negative!)
 pub const UV_EOF: c_int = -4095;
 pub const UV_ECONNRESET: c_int = -4077;
 pub const UV_EPIPE: c_int = -4047;
@@ -329,6 +336,7 @@ pub const UV_ENOTCONN: c_int = -4042;
 pub const UV_ETIMEDOUT: c_int = -4039;
 pub const UV_ECONNREFUSED: c_int = -4078;
 
+// External function declarations
 pub extern "c" fn uv_loop_init(loop: *uv_loop_t) c_int;
 pub extern "c" fn uv_loop_close(loop: *uv_loop_t) c_int;
 pub extern "c" fn uv_run(loop: *uv_loop_t, mode: c_int) c_int;
@@ -364,8 +372,6 @@ pub extern "c" fn uv_fileno(handle: *uv_handle_t, fd: *c_int) c_int;
 
 pub extern "c" fn uv_loop_alive(loop: *uv_loop_t) c_int;
 pub extern "c" fn uv_is_active(handle: *uv_handle_t) c_int;
-pub extern "c" fn uv_handle_size(type: c_int) usize;
-pub extern "c" fn uv_req_size(type: c_int) usize;
 
 pub fn errorString(err: c_int) []const u8 {
     return std.mem.span(uv_strerror(err));

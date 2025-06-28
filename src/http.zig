@@ -41,7 +41,7 @@ pub fn parseRequest(allocator: std.mem.Allocator, data: []const u8) !types.HttpR
     var headers = std.ArrayListUnmanaged(types.Header){};
     for (parsed.headers) |header| {
         try headers.append(allocator, types.Header{
-            .name = header.name, 
+            .name = header.name,
             .value = header.value,
         });
     }
@@ -52,14 +52,14 @@ pub fn parseRequest(allocator: std.mem.Allocator, data: []const u8) !types.HttpR
         if (body_start < data.len) {
             const body_data = data[body_start..];
             if (body_data.len > 0) {
-                body = body_data; 
+                body = body_data;
             }
         }
     }
 
     return types.HttpRequest{
         .method = method,
-        .path = parsed.path, 
+        .path = parsed.path,
         .version = version,
         .headers = headers,
         .body = body,

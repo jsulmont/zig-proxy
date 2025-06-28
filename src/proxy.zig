@@ -40,23 +40,18 @@ pub const Proxy = struct {
         const tls_server = try mtls.TlsServer.init(gpa, tls_config);
 
         const loop = try gpa.create(uv.Loop);
-        loop.* = uv.Loop{
-            .data = std.mem.zeroes([1072]u8),
-        };
+        loop.* = std.mem.zeroes(uv.Loop);
         try loop.init();
+
         logger.debug("proxy", "Loop initialized");
 
         try buffer_pool.initGlobalPool(gpa);
 
-        const server = uv.Tcp{
-            .data = std.mem.zeroes([264]u8),
-        };
+        const server = std.mem.zeroes(uv.Tcp);
 
         const upstream_pool = connection_pool.ConnectionPool.init(gpa, loop);
 
-        const pool_cleanup_timer = uv.Timer{
-            .data = std.mem.zeroes([264]u8),
-        };
+        const pool_cleanup_timer = std.mem.zeroes(uv.Timer);
 
         const async_logger = request_logger.AsyncRequestLogger.init(gpa, loop, logging_config.detailed_logging);
 
@@ -108,9 +103,7 @@ pub const Proxy = struct {
 
         logger.debug("proxy", "Server listening for connections");
 
-        var perf_timer = uv.Timer{
-            .data = std.mem.zeroes([264]u8),
-        };
+        var perf_timer = std.mem.zeroes(uv.Timer);
         try perf_timer.init(self.loop);
         perf_timer.setData(self);
         try perf_timer.start(performanceMonitorCallback, 10000, 10000);
@@ -221,9 +214,7 @@ pub const ConnectionContext = struct {
             .handshake_state = .starting,
             .connection_start_time = std.time.milliTimestamp(),
             .upstream_ref = upstream.UpstreamPtr.init(null),
-            .downstream_tcp = uv.Tcp{
-                .data = std.mem.zeroes([264]u8),
-            },
+            .downstream_tcp = std.mem.zeroes(uv.Tcp),
             .tls_conn = try proxy.tls_server.createConnection(),
         };
 

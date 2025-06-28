@@ -28,9 +28,7 @@ pub const ConnectionPool = struct {
             .allocator = allocator,
             .loop = loop,
             .pools = std.HashMap([]const u8, *HostPool, std.hash_map.StringContext, std.hash_map.default_max_load_percentage).init(allocator),
-            .idle_cleanup_timer = uv.Timer{
-                .data = std.mem.zeroes([264]u8),
-            },
+            .idle_cleanup_timer = std.mem.zeroes(uv.Timer),
         };
     }
 
@@ -463,9 +461,7 @@ pub const PooledConnection = struct {
     /// REFCOUNTED: Create a new reference counted pooled connection
     pub fn init(allocator: std.mem.Allocator, loop: *uv.Loop, host_pool: *HostPool) !*RefPooledConnection {
         const tcp = try allocator.create(uv.Tcp);
-        tcp.* = uv.Tcp{
-            .data = std.mem.zeroes([264]u8),
-        };
+        tcp.* = std.mem.zeroes(uv.Tcp);
         try tcp.init(loop);
 
         tcp.keepAlive(true, 30) catch |err| {
