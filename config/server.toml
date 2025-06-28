@@ -16,7 +16,7 @@ backends = [
 ]
 
 [logging]
-level = "info"
+level = "debug"
 format = "text"
 detailed_logging = true
 log_response_body = true

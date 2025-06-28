@@ -65,10 +65,7 @@ pub fn main() !void {
         return;
     };
 
-    const global = core.GlobalContext.init(gpa, listen_addr, cfg.upstream.backends) catch |err| {
-        logger.errf(gpa, "main", "Failed to create global context: {}", .{err});
-        return;
-    };
+    const global = try core.GlobalContext.init(gpa, listen_addr, cfg.upstream.backends);
     defer global.deinit();
 
     var http_proxy = proxy.Proxy.init(gpa, global, cfg.tls, cfg.logging) catch |err| {

@@ -1,8 +1,148 @@
 // src/xml_parser.zig - XML parsing and validation for IEEE 2030.5 compliance
 const std = @import("std");
-const libxml2 = @import("utils/libxml2.zig");
 const observability = @import("observability.zig");
 const logger = @import("logger.zig");
+
+/// Zero-copy XML scanner - returns slices into original data
+pub const XmlScanner = struct {
+    /// Scan result that points into the original buffer
+    pub const ScanResult = struct {
+        root_element: ?[]const u8, // Slice into original data
+        is_complete: bool = false,
+    };
+
+    /// Scan XML data without any allocations
+    pub fn scan(data: []const u8) ScanResult {
+        var pos: usize = 0;
+
+        // Skip BOM if present
+        if (data.len >= 3 and data[0] == 0xEF and data[1] == 0xBB and data[2] == 0xBF) {
+            pos = 3;
+        }
+
+        // Skip to root element
+        pos = skipToRootElement(data, pos);
+        if (pos >= data.len or data[pos] != '<') {
+            return .{ .root_element = null };
+        }
+
+        pos += 1; // Skip '<'
+
+        // Extract element name
+        const elem_start = pos;
+        while (pos < data.len) : (pos += 1) {
+            switch (data[pos]) {
+                ' ', '\t', '\n', '\r', '>', '/' => break,
+                else => {},
+            }
+        }
+
+        if (pos == elem_start) {
+            return .{ .root_element = null };
+        }
+
+        const element_name = data[elem_start..pos];
+
+        // Quick validation - just check if we can find the closing tag
+        const is_complete = quickValidate(data, pos, element_name);
+
+        return .{
+            .root_element = element_name,
+            .is_complete = is_complete,
+        };
+    }
+
+    fn skipToRootElement(data: []const u8, start: usize) usize {
+        var pos = start;
+
+        while (pos < data.len) {
+            // Skip whitespace
+            while (pos < data.len and std.ascii.isWhitespace(data[pos])) : (pos += 1) {}
+
+            if (pos >= data.len) break;
+
+            // Check what we're looking at
+            if (data[pos] != '<') {
+                // Not XML
+                return data.len;
+            }
+
+            if (pos + 1 >= data.len) break;
+
+            switch (data[pos + 1]) {
+                '?' => {
+                    // XML declaration or processing instruction
+                    pos = skipUntil(data, pos + 2, "?>") orelse data.len;
+                    if (pos < data.len) pos += 2;
+                },
+                '!' => {
+                    // Comment, CDATA, or DOCTYPE
+                    if (pos + 3 < data.len and data[pos + 2] == '-' and data[pos + 3] == '-') {
+                        // Comment
+                        pos = skipUntil(data, pos + 4, "-->") orelse data.len;
+                        if (pos < data.len) pos += 3;
+                    } else if (pos + 8 < data.len and std.mem.eql(u8, data[pos + 2 .. pos + 8], "CDATA[")) {
+                        // CDATA - this shouldn't be before root element, but handle it
+                        pos = skipUntil(data, pos + 8, "]]>") orelse data.len;
+                        if (pos < data.len) pos += 3;
+                    } else {
+                        // DOCTYPE or other
+                        pos = skipUntil(data, pos + 2, ">") orelse data.len;
+                        if (pos < data.len) pos += 1;
+                    }
+                },
+                else => {
+                    // This should be the root element
+                    return pos;
+                },
+            }
+        }
+
+        return pos;
+    }
+
+    fn skipUntil(data: []const u8, start: usize, needle: []const u8) ?usize {
+        return std.mem.indexOfPos(u8, data, start, needle);
+    }
+
+    fn quickValidate(data: []const u8, after_name: usize, element_name: []const u8) bool {
+        var pos = after_name;
+
+        // Skip to end of opening tag
+        while (pos < data.len and data[pos] != '>') : (pos += 1) {
+            if (data[pos] == '/' and pos + 1 < data.len and data[pos + 1] == '>') {
+                // Self-closing tag
+                return true;
+            }
+        }
+
+        if (pos >= data.len) return false;
+        pos += 1; // Skip '>'
+
+        // Look for closing tag
+        var search_pos = pos;
+        while (search_pos < data.len) {
+            const close_pos = std.mem.indexOfPos(u8, data, search_pos, "</") orelse return false;
+            search_pos = close_pos + 2;
+
+            // Check if this is our closing tag
+            if (search_pos + element_name.len <= data.len and
+                std.mem.eql(u8, data[search_pos .. search_pos + element_name.len], element_name))
+            {
+                // Verify it's followed by '>' or whitespace
+                const after_elem = search_pos + element_name.len;
+                if (after_elem < data.len) {
+                    switch (data[after_elem]) {
+                        '>', ' ', '\t', '\n', '\r' => return true,
+                        else => {},
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+};
 
 /// XML processing result with validation info
 pub const XmlParseResult = struct {
@@ -224,135 +364,33 @@ pub const XmlProcessor = struct {
             return result;
         }
 
-        // Try fast root element extraction first
-        const root_element = libxml2.extractRootElementName(self.allocator, trimmed) catch |err| {
-            result.processing_time_ns = timer.elapsedNs();
-            result.error_message = try std.fmt.allocPrint(self.allocator, "Root element extraction failed: {}", .{err});
-            observability.recordError(.parse_error, null);
-            return result;
-        };
+        // Zero-copy scan
+        const scan_result = XmlScanner.scan(trimmed);
 
-        if (root_element) |elem| {
-            result.root_element = elem;
+        if (scan_result.root_element) |elem| {
+            // Create owned copy for thread-safe logging
+            result.root_element = try self.allocator.dupe(u8, elem);
             result.message_type = MessageType.fromRootElement(elem);
+            result.is_well_formed = scan_result.is_complete;
 
-            // Now do full XML validation
-            result.is_well_formed = libxml2.isWellFormed(trimmed);
-
-            if (!result.is_well_formed) {
-                result.error_message = try self.allocator.dupe(u8, "XML is not well-formed");
-                observability.recordError(.malformed_xml, result.message_type);
-            } else {
-                // Success! Record statistics
+            if (result.is_well_formed) {
                 result.processing_time_ns = timer.elapsedNs();
                 observability.recordMessage(result.message_type.?, direction, backend_url, result.processing_time_ns);
 
                 logger.debugf(self.allocator, "xml", "Processed {s} XML message ({s}) in {:.2}ms", .{ elem, @tagName(direction), timer.elapsedMs() });
 
                 return result;
+            } else {
+                result.error_message = try self.allocator.dupe(u8, "XML appears incomplete or malformed");
+                observability.recordError(.malformed_xml, result.message_type);
             }
         } else {
-            result.error_message = try self.allocator.dupe(u8, "Could not extract root element");
+            result.error_message = try self.allocator.dupe(u8, "Could not find root element");
             observability.recordError(.parse_error, null);
         }
 
         result.processing_time_ns = timer.elapsedNs();
         return result;
-    }
-
-    /// Detailed XML parsing with element access (for future validation)
-    /// This provides access to the parsed XML tree for content validation
-    pub fn parseWithAccess(self: *XmlProcessor, xml_data: []const u8) !?ParsedXml {
-        if (xml_data.len == 0) return null;
-
-        const trimmed = std.mem.trim(u8, xml_data, " \t\n\r");
-        if (trimmed.len == 0 or trimmed[0] != '<') return null;
-
-        const doc = libxml2.XmlDocument.parseMemory(self.allocator, trimmed) catch |err| {
-            logger.debugf("xml", "Failed to parse XML document: {}", .{err});
-            return null;
-        };
-
-        return ParsedXml{
-            .document = doc,
-            .allocator = self.allocator,
-        };
-    }
-};
-
-/// Wrapper for parsed XML document with helper methods
-pub const ParsedXml = struct {
-    document: libxml2.XmlDocument,
-    allocator: std.mem.Allocator,
-
-    pub fn deinit(self: *ParsedXml) void {
-        self.document.deinit();
-    }
-
-    pub fn getRootElement(self: *ParsedXml) ?libxml2.XmlElement {
-        return self.document.getRootElement();
-    }
-
-    /// Find element by name (simple XPath-like search)
-    pub fn findElement(self: *ParsedXml, element_name: []const u8) ?libxml2.XmlElement {
-        const root = self.getRootElement() orelse return null;
-        return root.findElement(element_name);
-    }
-
-    /// Get text content of an element
-    pub fn getElementText(self: *ParsedXml, element_name: []const u8) !?[]u8 {
-        const element = self.findElement(element_name) orelse return null;
-        return element.getContent();
-    }
-
-    /// Get attribute value from an element
-    pub fn getElementAttribute(self: *ParsedXml, element_name: []const u8, attr_name: []const u8) !?[]u8 {
-        const element = self.findElement(element_name) orelse return null;
-        return element.getAttribute(attr_name);
-    }
-
-    /// IEEE 2030.5 specific: extract common fields for validation
-    pub fn extractCommonFields(self: *ParsedXml) !CommonFields {
-        var fields = CommonFields{};
-
-        // Extract href (common in IEEE 2030.5)
-        if (self.getRootElement()) |root| {
-            fields.href = root.getAttribute("href") catch null;
-        }
-
-        // Extract mRID (meter reading ID)
-        fields.mrid = self.getElementText("mRID") catch null;
-
-        // Extract description
-        fields.description = self.getElementText("description") catch null;
-
-        // Extract version
-        fields.version = self.getElementText("version") catch null;
-
-        // Extract time-related fields
-        fields.creation_time = self.getElementText("creationTime") catch null;
-        fields.effective_time = self.getElementText("effectiveTime") catch null;
-
-        return fields;
-    }
-};
-
-/// Common IEEE 2030.5 fields for validation
-pub const CommonFields = struct {
-    href: ?[]u8 = null,
-    mrid: ?[]u8 = null,
-    description: ?[]u8 = null,
-    version: ?[]u8 = null,
-    creation_time: ?[]u8 = null,
-    effective_time: ?[]u8 = null,
-
-    pub fn deinit(self: *CommonFields, allocator: std.mem.Allocator) void {
-        if (self.href) |h| allocator.free(h);
-        if (self.mrid) |m| allocator.free(m);
-        if (self.description) |d| allocator.free(d);
-        if (self.version) |v| allocator.free(v);
-        if (self.creation_time) |ct| allocator.free(ct);
-        if (self.effective_time) |et| allocator.free(et);
     }
 };
 
@@ -361,15 +399,13 @@ var xml_processor_initialized = false;
 
 pub fn init() void {
     if (!xml_processor_initialized) {
-        libxml2.init();
         xml_processor_initialized = true;
-        logger.info("xml", "XML processor initialized");
+        logger.info("xml", "XML processor initialized (zero-copy mode)");
     }
 }
 
 pub fn deinit() void {
     if (xml_processor_initialized) {
-        libxml2.deinit();
         xml_processor_initialized = false;
         logger.info("xml", "XML processor deinitialized");
     }
