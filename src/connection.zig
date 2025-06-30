@@ -492,7 +492,7 @@ pub const ConnectionContext = struct {
             xml_parser.init();
             var processor = xml_parser.XmlProcessor.init(self.gpa);
             var result = processor.processXml(response_body, .outbound, null) catch |err| blk: {
-                logger.debugf(self.gpa, "connection", "Failed to parse response XML: {}", .{err});
+                logger.errf(self.gpa, "connection", "Failed to parse response XML: {}", .{err});
                 break :blk xml_parser.XmlParseResult{
                     .is_well_formed = false,
                     .processing_time_ns = 0,
@@ -660,11 +660,16 @@ pub const RequestContext = struct {
         const allocator = arena.allocator();
 
         const self = try allocator.create(RequestContext);
-        self.arena = arena;
-        self.gpa = gpa;
-        self.conn_ctx = conn_ctx;
-        self.start_time = std.time.nanoTimestamp();
-        self.request_id = try generateRequestId(allocator);
+        self.* = RequestContext{
+            .arena = arena,
+            .gpa = gpa,
+            .conn_ctx = conn_ctx,
+            .start_time = std.time.nanoTimestamp(),
+            .request_id = try generateRequestId(allocator),
+            .request = null,
+            .upstream_url = "",
+            .request_xml_message = null,
+        };
 
         return self;
     }
