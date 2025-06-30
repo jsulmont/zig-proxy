@@ -145,7 +145,7 @@ pub const Tcp = extern struct {
     }
 
     pub fn getWriteQueueSize(self: *const Tcp) usize {
-        return uv_stream_get_write_queue_size(@ptrCast(self));
+        return uv_stream_get_write_queue_size(@constCast(@ptrCast(self)));
     }
 
     pub fn keepAlive(self: *Tcp, enable: bool, delay: u32) !void {
@@ -160,6 +160,12 @@ pub const Tcp = extern struct {
             return error.GetFdFailed;
         }
         return fd;
+    }
+
+    pub fn setSimultaneousAccepts(self: *Tcp, enable: bool) !void {
+        if (uv_tcp_simultaneous_accepts(@ptrCast(self), if (enable) 1 else 0) != 0) {
+            return error.SimultaneousAcceptsFailed;
+        }
     }
 };
 
@@ -372,6 +378,8 @@ pub extern "c" fn uv_fileno(handle: *uv_handle_t, fd: *c_int) c_int;
 
 pub extern "c" fn uv_loop_alive(loop: *uv_loop_t) c_int;
 pub extern "c" fn uv_is_active(handle: *uv_handle_t) c_int;
+
+pub extern "c" fn uv_tcp_simultaneous_accepts(handle: *uv_tcp_t, enable: c_int) c_int;
 
 pub fn errorString(err: c_int) []const u8 {
     return std.mem.span(uv_strerror(err));

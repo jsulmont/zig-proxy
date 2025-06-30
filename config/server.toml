@@ -16,9 +16,9 @@ backends = [
 ]
 
 [logging]
-level = "debug"
+level = "info"
 format = "text"
-detailed_logging = true
+detailed_logging = false
 log_response_body = true
 max_logged_body_size = 1048576
 

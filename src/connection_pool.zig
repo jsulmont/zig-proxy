@@ -100,6 +100,8 @@ const HostPool = struct {
     host: []const u8,
     port: u16,
 
+    is_growing: bool = false,
+
     // REFCOUNTED: Store reference counted connections
     available: std.ArrayList(*RefPooledConnection),
     in_use: std.ArrayList(*RefPooledConnection),
@@ -190,11 +192,13 @@ const HostPool = struct {
         else
             0.0;
 
-        if (usage_ratio > POOL_GROWTH_THRESHOLD and self.max_pool_size < POOL_MAX_SIZE_PER_HOST) {
+        if (usage_ratio > POOL_GROWTH_THRESHOLD and self.max_pool_size < POOL_MAX_SIZE_PER_HOST and !self.is_growing) {
             const new_size = @min(self.max_pool_size * 2, POOL_MAX_SIZE_PER_HOST);
             if (new_size != self.max_pool_size) {
-                logger.infof(self.allocator, "pool", "Growing pool for {s}:{} from {} to {} (usage: {:.1}%)", .{ self.host, self.port, self.max_pool_size, new_size, usage_ratio * 100.0 });
+                self.is_growing = true;
+                logger.debugf(self.allocator, "pool", "Growing pool for {s}:{} from {} to {} (usage: {:.1}%)", .{ self.host, self.port, self.max_pool_size, new_size, usage_ratio * 100.0 });
                 self.max_pool_size = new_size;
+                self.is_growing = false;
             }
         } else if (usage_ratio < 0.2 and self.max_pool_size > POOL_MIN_SIZE_PER_HOST) {
             const new_size = @max(self.max_pool_size / 2, POOL_MIN_SIZE_PER_HOST);
@@ -416,7 +420,7 @@ const HostPool = struct {
                 conn.handleDnsError("Internal DNS error");
             }
 
-            ref_conn.release(); // Release our pending reference
+            ref_conn.release();
         }
     }
 };
@@ -605,7 +609,6 @@ pub const PooledConnection = struct {
 
         const write_ctx = try self.allocator.create(WriteContext);
 
-        // Get our reference for the write callback
         const our_ref = if (self.tcp.getData(RefPooledConnection)) |ref|
             ref.retain()
         else
@@ -614,7 +617,7 @@ pub const PooledConnection = struct {
         write_ctx.* = WriteContext{
             .write_req = uv.WriteReq.init(),
             .connection_ref = our_ref,
-            .allocator = self.allocator, // Store allocator
+            .allocator = self.allocator,
         };
         write_ctx.write_req.setData(write_ctx);
 

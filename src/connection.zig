@@ -38,6 +38,12 @@ pub const ConnectionContext = struct {
     lfdi: ?[]const u8 = null,
     sfdi: ?[]const u8 = null,
 
+    bytes_in_flight: std.atomic.Value(u64),
+    is_congested: std.atomic.Value(bool),
+
+    pub const CONGESTION_HIGH_WATER: u64 = 256 * 1024; // 256KB
+    pub const CONGESTION_LOW_WATER: u64 = 64 * 1024; // 64KB
+
     const HandshakeState = enum {
         starting,
         in_progress,
@@ -65,6 +71,8 @@ pub const ConnectionContext = struct {
             .upstream_ref = upstream.UpstreamPtr.init(null),
             .downstream_tcp = std.mem.zeroes(uv.Tcp),
             .tls_conn = try proxy_typed.tls_server.createConnection(),
+            .bytes_in_flight = std.atomic.Value(u64).init(0),
+            .is_congested = std.atomic.Value(bool).init(false),
         };
 
         const ref_conn = try RefConnectionContext.init(gpa, conn_ctx);
@@ -77,6 +85,11 @@ pub const ConnectionContext = struct {
 
     pub fn deinit(self: *ConnectionContext) void {
         logger.debug("connection", "Cleaning up refcounted connection context");
+
+        // Decrement active connections
+        const Proxy = @import("proxy.zig").Proxy;
+        const proxy_typed: *Proxy = @ptrCast(@alignCast(self.proxy));
+        _ = proxy_typed.active_connections.fetchSub(1, .monotonic);
 
         if (self.lfdi) |lfdi| self.gpa.free(lfdi);
         if (self.sfdi) |sfdi| self.gpa.free(sfdi);
@@ -195,14 +208,23 @@ pub const ConnectionContext = struct {
     pub fn processHttpRequest(self: *ConnectionContext, http_data: []const u8) void {
         logger.debugf(self.gpa, "connection", "Processing HTTP request ({} bytes)", .{http_data.len});
 
+        // Get proxy reference for stats
+        const Proxy = @import("proxy.zig").Proxy;
+        const proxy_typed: *Proxy = @ptrCast(@alignCast(self.proxy));
+
+        // INCREMENT active requests when request starts
+        _ = proxy_typed.active_requests.fetchAdd(1, .monotonic);
+
         self.request_ctx = RequestContext.init(self.gpa, self) catch |err| {
             logger.errf(self.gpa, "connection", "Failed to create request context: {}", .{err});
+            _ = proxy_typed.active_requests.fetchSub(1, .monotonic); // Decrement on error
             self.close();
             return;
         };
 
         const request = http.parseRequest(self.request_ctx.?.arena.allocator(), http_data) catch |err| {
             logger.errf(self.gpa, "connection", "Failed to parse HTTP request: {}", .{err});
+            _ = proxy_typed.active_requests.fetchSub(1, .monotonic); // Decrement on error
             self.sendErrorResponse(400, "Bad Request");
             return;
         };
@@ -211,8 +233,6 @@ pub const ConnectionContext = struct {
         self.requests_processed += 1;
 
         // Get proxy reference for stats
-        const Proxy = @import("proxy.zig").Proxy;
-        const proxy_typed: *Proxy = @ptrCast(@alignCast(self.proxy));
         _ = proxy_typed.total_requests_processed.fetchAdd(1, .monotonic);
 
         logger.debugf(self.gpa, "connection", "Request {s}: {} {s}", .{ self.request_ctx.?.request_id, request.method, request.path });
@@ -258,7 +278,6 @@ pub const ConnectionContext = struct {
             return;
         };
 
-        // Get proxy reference for async logger
         const Proxy = @import("proxy.zig").Proxy;
         const proxy_typed: *Proxy = @ptrCast(@alignCast(self.proxy));
 
@@ -267,6 +286,10 @@ pub const ConnectionContext = struct {
         };
 
         self.sendTlsResponse(response);
+
+        // DECREMENT active requests on error
+        _ = proxy_typed.active_requests.fetchSub(1, .monotonic);
+        proxy_typed.checkAcceptPressure();
     }
 
     pub fn close(self: *ConnectionContext) void {
@@ -348,6 +371,7 @@ pub const ConnectionContext = struct {
             logger.errf(self.gpa, "connection", "Failed to write to downstream: {}", .{err});
             write_ctx.deinit();
             self.close();
+            return;
         };
     }
 
@@ -472,6 +496,14 @@ pub const ConnectionContext = struct {
         if (self.request_ctx) |req_ctx| {
             req_ctx.markComplete();
             logger.debugf(self.gpa, "connection", "Request {s} completed in {:.2}ms", .{ req_ctx.request_id, req_ctx.getProcessingTimeMs() });
+
+            // DECREMENT active requests when request completes
+            const Proxy = @import("proxy.zig").Proxy;
+            const proxy_typed: *Proxy = @ptrCast(@alignCast(self.proxy));
+            _ = proxy_typed.active_requests.fetchSub(1, .monotonic);
+
+            // Check if we should resume accepts
+            proxy_typed.checkAcceptPressure();
         }
     }
 
