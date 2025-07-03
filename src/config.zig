@@ -8,6 +8,7 @@ pub const Config = struct {
     upstream: UpstreamConfig,
     logging: LoggingConfig,
     health_check: HealthCheckConfig,
+    vendors: VendorConfig,
     allocator: std.mem.Allocator,
 
     pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8) !Config {
@@ -26,6 +27,7 @@ pub const Config = struct {
         self.upstream.deinit(self.allocator);
         self.logging.deinit(self.allocator);
         self.health_check.deinit(self.allocator);
+        self.vendors.deinit(self.allocator);
     }
 
     fn cloneConfig(allocator: std.mem.Allocator, raw: RawConfig) !Config {
@@ -35,6 +37,7 @@ pub const Config = struct {
             .upstream = try UpstreamConfig.clone(allocator, raw.upstream),
             .logging = try LoggingConfig.clone(allocator, raw.logging),
             .health_check = try HealthCheckConfig.clone(allocator, raw.health_check orelse RawHealthCheckConfig{}),
+            .vendors = try VendorConfig.clone(allocator, raw.vendors orelse RawVendorConfig{}),
             .allocator = allocator,
         };
     }
@@ -46,6 +49,7 @@ const RawConfig = struct {
     upstream: RawUpstreamConfig,
     logging: RawLoggingConfig,
     health_check: ?RawHealthCheckConfig = null,
+    vendors: ?RawVendorConfig = null,
 };
 
 const RawServerConfig = struct {
@@ -74,6 +78,16 @@ const RawLoggingConfig = struct {
 const RawHealthCheckConfig = struct {
     interval_seconds: ?u32 = null,
     connection_timeout_ms: ?u32 = null,
+};
+
+const RawVendorConfig = struct {
+    vendor: ?[]RawVendorOidMapping = null,
+};
+
+const RawVendorOidMapping = struct {
+    name: []const u8,
+    oid: []const u8,
+    device_type: []const u8,
 };
 
 pub const ServerConfig = struct {
@@ -203,5 +217,54 @@ pub const HealthCheckConfig = struct {
     fn deinit(self: *const HealthCheckConfig, allocator: std.mem.Allocator) void {
         _ = self;
         _ = allocator;
+    }
+};
+
+pub const VendorConfig = struct {
+    vendors: []const VendorOidMapping,
+
+    fn clone(allocator: std.mem.Allocator, raw: RawVendorConfig) !VendorConfig {
+        if (raw.vendor) |raw_vendors| {
+            var vendors = try allocator.alloc(VendorOidMapping, raw_vendors.len);
+            for (raw_vendors, 0..) |raw_vendor, i| {
+                vendors[i] = try VendorOidMapping.clone(allocator, raw_vendor);
+            }
+            return VendorConfig{
+                .vendors = vendors,
+            };
+        }
+
+        return VendorConfig{
+            .vendors = &[_]VendorOidMapping{},
+        };
+    }
+
+    fn deinit(self: *const VendorConfig, allocator: std.mem.Allocator) void {
+        for (self.vendors) |*vendor| {
+            vendor.deinit(allocator);
+        }
+        if (self.vendors.len > 0) {
+            allocator.free(self.vendors);
+        }
+    }
+};
+
+pub const VendorOidMapping = struct {
+    name: []const u8,
+    oid: []const u8,
+    device_type: []const u8,
+
+    fn clone(allocator: std.mem.Allocator, raw: RawVendorOidMapping) !VendorOidMapping {
+        return VendorOidMapping{
+            .name = try allocator.dupe(u8, raw.name),
+            .oid = try allocator.dupe(u8, raw.oid),
+            .device_type = try allocator.dupe(u8, raw.device_type),
+        };
+    }
+
+    fn deinit(self: *const VendorOidMapping, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.oid);
+        allocator.free(self.device_type);
     }
 };

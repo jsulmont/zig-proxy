@@ -68,7 +68,7 @@ pub fn main() !void {
     const global = try core.GlobalContext.init(gpa, listen_addr, cfg.upstream.backends);
     defer global.deinit();
 
-    var http_proxy = proxy.Proxy.init(gpa, global, cfg.tls, cfg.logging) catch |err| {
+    var http_proxy = proxy.Proxy.init(gpa, global, cfg.tls, cfg.logging, cfg.vendors) catch |err| {
         logger.errf(gpa, "main", "Failed to create TLS proxy: {}", .{err});
         return;
     };
@@ -82,5 +82,12 @@ pub fn main() !void {
         return;
     };
 
-    logger.info("main", " Proxy shutdown complete");
+    if (cfg.vendors.vendors.len > 0) {
+        logger.infof(gpa, "main", " Vendor OIDs configured: {}", .{cfg.vendors.vendors.len});
+        for (cfg.vendors.vendors) |vendor| {
+            logger.infof(gpa, "main", "   - {s}: OID {s} ({s})", .{ vendor.name, vendor.oid, vendor.device_type });
+        }
+    } else {
+        logger.info("main", " No vendor OIDs configured - using IEEE 2030.5 standard OIDs only");
+    }
 }

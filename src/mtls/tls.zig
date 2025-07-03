@@ -5,11 +5,15 @@ const config = @import("../config.zig");
 const logger = @import("../logger.zig");
 const session_manager = @import("session_manager.zig");
 const session_cache = @import("session_cache.zig");
+const validation = @import("validation.zig");
+const certificate = @import("certificate.zig");
 
 pub const TlsServer = struct {
     allocator: std.mem.Allocator,
     ssl_ctx: openssl.SslContext,
     session_mgr: session_manager.SessionManager,
+    vendor_config: ?config.VendorConfig,
+    validator: ?validation.CertificateValidator,
 
     pub fn init(allocator: std.mem.Allocator, tls_config: config.TlsConfig) !TlsServer {
         try openssl.init();
@@ -57,16 +61,36 @@ pub const TlsServer = struct {
             .allocator = allocator,
             .ssl_ctx = ssl_ctx,
             .session_mgr = session_mgr,
+            .vendor_config = null,
+            .validator = null,
         };
     }
 
+    pub fn initWithVendorConfig(allocator: std.mem.Allocator, tls_config: config.TlsConfig, vendor_config: config.VendorConfig) !TlsServer {
+        var server = try init(allocator, tls_config);
+
+        // Store vendor config
+        server.vendor_config = vendor_config;
+
+        // Initialize validator with vendor config
+        server.validator = try validation.CertificateValidator.initWithVendorConfig(allocator, false, // don't skip OID validation
+            vendor_config);
+
+        logger.infof(allocator, "tls", "Registered {} vendor OIDs for certificate validation", .{vendor_config.vendors.len});
+
+        return server;
+    }
+
     pub fn deinit(self: *TlsServer) void {
+        if (self.validator) |*validator| {
+            validator.deinit();
+        }
         self.ssl_ctx.deinit();
         session_cache.deinitGlobalCache(self.allocator);
     }
 
     pub fn createConnection(self: *TlsServer) !TlsConnection {
-        return TlsConnection.init(&self.ssl_ctx, self.allocator);
+        return TlsConnection.init(&self.ssl_ctx, self.allocator, self.validator);
     }
 };
 
@@ -74,18 +98,24 @@ pub const TlsConnection = struct {
     ssl_conn: openssl.SslConnection,
     allocator: std.mem.Allocator,
     client_cert: ?openssl.Certificate = null,
+    client_cert_info: ?certificate.CertificateInfo = null,
     handshake_done: bool = false,
+    validator: ?validation.CertificateValidator,
 
-    pub fn init(ssl_ctx: *openssl.SslContext, allocator: std.mem.Allocator) !TlsConnection {
+    pub fn init(ssl_ctx: *openssl.SslContext, allocator: std.mem.Allocator, validator: ?validation.CertificateValidator) !TlsConnection {
         const ssl_conn = try openssl.SslConnection.init(ssl_ctx);
 
         return TlsConnection{
             .ssl_conn = ssl_conn,
             .allocator = allocator,
+            .validator = validator,
         };
     }
 
     pub fn deinit(self: *TlsConnection) void {
+        if (self.client_cert_info) |*cert_info| {
+            cert_info.deinit(self.allocator);
+        }
         if (self.client_cert) |*cert| {
             cert.deinit();
         }
@@ -127,17 +157,37 @@ pub const TlsConnection = struct {
             if (openssl.Certificate.fromPeer(&self.ssl_conn)) |cert| {
                 self.client_cert = cert;
 
-                const subject = cert.getSubjectName(self.allocator) catch |err| blk: {
-                    logger.warnf(self.allocator, "tls", "Failed to get certificate subject: {}", .{err});
-                    break :blk try self.allocator.dupe(u8, "unknown");
-                };
-                defer self.allocator.free(subject);
+                // Validate certificate if validator is available
+                if (self.validator) |*validator| {
+                    self.client_cert_info = validator.validateCertificate(&cert) catch |err| {
+                        logger.errf(self.allocator, "tls", "Certificate validation failed: {}", .{err});
+                        return err;
+                    };
 
-                const issuer = cert.getIssuerName(self.allocator) catch |err| blk: {
-                    logger.warnf(self.allocator, "tls", "Failed to get certificate issuer: {}", .{err});
-                    break :blk try self.allocator.dupe(u8, "unknown");
-                };
-                defer self.allocator.free(issuer);
+                    // Log certificate info
+                    if (self.client_cert_info) |cert_info| {
+                        logger.infof(self.allocator, "tls", "Client certificate validated - LFDI: {s}, SFDI: {s}", .{ cert_info.lfdi orelse "none", cert_info.sfdi orelse "none" });
+
+                        if (cert_info.hardware_identity) |hw| {
+                            logger.infof(self.allocator, "tls", "Device: {s} ({s})", .{ hw.device_type.toString(), hw.vendor_name orelse "Unknown Vendor" });
+                        }
+                    }
+                } else {
+                    // No validator, just extract basic info
+                    const subject = cert.getSubjectName(self.allocator) catch |err| blk: {
+                        logger.warnf(self.allocator, "tls", "Failed to get certificate subject: {}", .{err});
+                        break :blk try self.allocator.dupe(u8, "unknown");
+                    };
+                    defer self.allocator.free(subject);
+
+                    const issuer = cert.getIssuerName(self.allocator) catch |err| blk: {
+                        logger.warnf(self.allocator, "tls", "Failed to get certificate issuer: {}", .{err});
+                        break :blk try self.allocator.dupe(u8, "unknown");
+                    };
+                    defer self.allocator.free(issuer);
+
+                    logger.infof(self.allocator, "tls", "Client certificate - Subject: {s}, Issuer: {s}", .{ subject, issuer });
+                }
             } else {
                 logger.warn("tls", "No client certificate available after handshake");
             }
@@ -158,5 +208,9 @@ pub const TlsConnection = struct {
 
     pub fn getClientCertificate(self: *TlsConnection) ?*const openssl.Certificate {
         return if (self.client_cert) |*cert| cert else null;
+    }
+
+    pub fn getClientCertificateInfo(self: *TlsConnection) ?*const certificate.CertificateInfo {
+        return if (self.client_cert_info) |*info| info else null;
     }
 };

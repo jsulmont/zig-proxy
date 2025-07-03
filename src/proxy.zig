@@ -38,9 +38,11 @@ pub const Proxy = struct {
     const RESUME_ACTIVE_REQUESTS: u32 = 400; // Resume when below 400 (not 250!)
     const MIN_PAUSE_DURATION_MS: i64 = 1000; // Minimum pause duration before resuming accepts
 
-    pub fn init(gpa: std.mem.Allocator, global: *core.GlobalContext, tls_config: config.TlsConfig, logging_config: config.LoggingConfig) !Proxy {
-        const tls_server = try mtls.TlsServer.init(gpa, tls_config);
-
+    pub fn init(gpa: std.mem.Allocator, global: *core.GlobalContext, tls_config: config.TlsConfig, logging_config: config.LoggingConfig, vendor_config: config.VendorConfig) !Proxy {
+        const tls_server = if (vendor_config.vendors.len > 0)
+            try mtls.TlsServer.initWithVendorConfig(gpa, tls_config, vendor_config)
+        else
+            try mtls.TlsServer.init(gpa, tls_config);
         const loop = try gpa.create(uv.Loop);
         loop.* = std.mem.zeroes(uv.Loop);
         try loop.init();
