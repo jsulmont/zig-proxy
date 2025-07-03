@@ -216,8 +216,14 @@ zig build test
 
 ## License
 
-[Choose your license - e.g., MIT, Apache 2.0, etc.]
+This project is dual-licensed under either:
 
-## Acknowledgments
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 
-This proxy was designed for IEEE 2030.5 (SEP2) compliance in smart grid deployments. It provides the secure communication infrastructure needed for distributed energy resources, smart meters, and grid management systems.
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
