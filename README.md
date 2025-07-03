@@ -206,6 +206,29 @@ Run tests with:
 zig build test
 ```
 
+## Running Test Backends
+
+For developing and testing, you can run simple backend servers using the included Rust implementation:
+
+```bash
+
+# Run multiple backend instances on different ports
+nohup cargo run --release --manifest-path ieee2030-backend/Cargo.toml -- 17777 >& 17777.out &
+nohup cargo run --release --manifest-path ieee2030-backend/Cargo.toml -- 18888 >& 18888.out &
+nohup cargo run --release --manifest-path ieee2030-backend/Cargo.toml -- 19999 >& 19999.out &
+```
+
+which would mock upstream servers in:
+
+```toml
+[upstream]
+backends = [
+    "http://127.0.0.1:18888",
+    "http://127.0.0.1:17777",
+    "http://127.0.0.1:19999",
+]
+```
+
 ### Contributing
 
 1. Fork the repository
