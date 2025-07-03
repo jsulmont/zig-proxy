@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     exe.linkSystemLibrary("ssl");
     exe.linkSystemLibrary("crypto");
-    exe.linkSystemLibrary("xml2");
+    // exe.linkSystemLibrary("xml2");
     exe.linkSystemLibrary("uv");
 
     if (target.result.os.tag == .macos) {
@@ -30,8 +30,8 @@ pub fn build(b: *std.Build) void {
         exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
         exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
 
-        // Add libxml2 include path
-        exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include/libxml2" });
+        // // Add libxml2 include path
+        // exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include/libxml2" });
 
         // Try to find OpenSSL dynamically instead of hardcoding version
         // First try the generic path
@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) void {
         // exe.linkSystemLibrary("jemalloc");
     } else if (target.result.os.tag == .linux) {
         exe.addIncludePath(.{ .cwd_relative = "/usr/include/openssl" });
-        exe.addIncludePath(.{ .cwd_relative = "/usr/include/libxml2" });
+        // exe.addIncludePath(.{ .cwd_relative = "/usr/include/libxml2" });
         exe.addLibraryPath(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu" });
 
         exe.linkSystemLibrary("jemalloc");

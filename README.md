@@ -27,22 +27,26 @@ A high-performance proxy server for IEEE 2030.5 (Smart Energy Profile 2.0) commu
 - Zig master (latest development version)
 - libuv
 - OpenSSL 3.x
-- libxml2 (optional, for full XML validation)
+- libxml2 (not currently required - using built-in zero-copy XML parser)
 
 ### macOS Installation
 
 ```bash
-brew install libuv openssl@3 libxml2
+brew install libuv openssl@3
+# libxml2 not currently required
+
 ```
 
 ### Linux Installation
 
 ```bash
 # Ubuntu/Debian
-apt-get install libuv1-dev libssl-dev libxml2-dev
+apt-get install libuv1-dev libssl-dev
+# libxml2-dev not currently required
 
 # Fedora/RHEL
-dnf install libuv-devel openssl-devel libxml2-devel
+dnf install libuv-devel openssl-devel
+# libxml2-devel not currently required
 ```
 
 ## Building
