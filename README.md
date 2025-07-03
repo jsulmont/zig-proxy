@@ -138,6 +138,7 @@ The proxy expects IEEE 2030.5 compliant certificates with:
 ## Architecture
 
 The proxy uses:
+
 - **libuv** for async I/O and event loop
 - **OpenSSL** for TLS and cryptography
 - **Zero-copy parsing** for performance
@@ -171,6 +172,7 @@ The proxy includes several performance optimizations:
 Health check endpoint: `http://health_addr/health`
 
 Returns:
+
 - Active connections
 - Request rate
 - Pool statistics
@@ -180,7 +182,7 @@ Returns:
 
 ### Project Structure
 
-```
+```bash
 src/
 ├── main.zig              # Entry point
 ├── proxy.zig             # Main proxy server

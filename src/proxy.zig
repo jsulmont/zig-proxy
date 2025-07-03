@@ -147,7 +147,7 @@ pub const Proxy = struct {
         const active_reqs = proxy.active_requests.load(.monotonic);
         const paused = proxy.accepts_paused.load(.monotonic);
 
-        logger.infof(proxy.gpa, "proxy", "PERF: processed={}, active_conns={}, active_requests={}, accepts_paused={}", .{ processed, active_conns, active_reqs, paused });
+        logger.debugf(proxy.gpa, "proxy", "PERF: processed={}, active_conns={}, active_requests={}, accepts_paused={}", .{ processed, active_conns, active_reqs, paused });
     }
 
     fn onNewConnection(server_handle: *anyopaque, status: c_int) callconv(.C) void {
